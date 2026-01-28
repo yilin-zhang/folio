@@ -1,0 +1,78 @@
+#+TITLE: Folio 🗂️
+
+Folio builds on Emacs's built-in bookmark system. It stores URLs and local files
+in your bookmark file and provides an alternative list UI for editing,
+filtering, sorting, and adding tags, notes, and read/archive status.
+
+This plugin involved quite a bit of vibe coding. The code is messy and bloated.
+Since I'm not very familiar with the full feature set of the built-in bookmark,
+there may be existing features that I re-implemented unnecessarily. I would
+like to keep it this way for now and revisit it later. Meanwhile, if you like
+it, feel free to use it, hack on it, or send PRs to improve it.
+
+* Installation
+#+begin_src elisp
+(use-package folio
+  :ensure nil
+  :load-path "path/to/folio/repo"
+  :commands (folio-list
+             folio-add-url
+             folio-add-file
+             ;; The line below is important,
+             ;; otherwise the first jump from bookmark won't work.
+             folio-bookmark-url-handler)
+  :config
+  ;; If you have nerd-icons installed:
+  (setq folio-nerd-icons-enabled t))
+#+end_src
+
+* Quick start
+- =M-x folio-add-url= to capture a URL
+- =M-x folio-add-file= to capture a local file
+- =M-x folio-list= to open the list UI
+- =M-x folio-bookmark-set= to save the current location as a Folio entry
+
+Folio stores data in the Emacs bookmark file. All entries are compatible with
+the built-in bookmark. For existing and new bookmarks, it adds folio-specific
+fields prefixed with =folio-*=, plus a =handler= for URL and file entries.
+
+* List buffer key bindings
+| Key     | Command                  | Description           |
+|---------+--------------------------+-----------------------|
+| RET / o | =folio-list-open=          | Open entry at point   |
+| /       | =folio-list-filter-tags=   | Filter by tags        |
+| *       | =folio-list-toggle-read=   | Toggle read/unread    |
+| a       | =folio-list-archive=       | Archive entry         |
+| u       | =folio-list-unarchive=     | Unarchive entry       |
+| e l     | =folio-list-edit-title=    | Edit title            |
+| +       | =folio-list-edit-note=     | Edit note             |
+| e u     | =folio-list-edit-location= | Edit URL or file path |
+| e t     | =folio-list-edit-tags=     | Edit tags             |
+| d       | =folio-list-delete=        | Delete entry          |
+| g       | =folio-list-refresh=       | Refresh list          |
+| ; l     | =folio-list-sort-by-title= | Sort by title         |
+| ; t     | =folio-list-sort-by-time=  | Sort by added time    |
+| -       | =folio-add-url=            | Capture URL           |
+| =       | =folio-add-file=           | Capture file          |
+
+* Customization
+- =folio-url-open-function=: function used to open URLs (default =browse-url=)
+- =folio-list-sort-key=: default sort key (=added= or =title=)
+- =folio-nerd-icons-enabled=: enable Nerd Icons in the list (requires =nerd-icons=)
+- =folio-save-after-change=: save bookmarks immediately after Folio updates
+
+* Data storage
+Folio stores entries in your bookmark file with extra fields:
+- =folio-id=: unique identifier
+- =folio-status=: =unread=, =read=, or =archived=
+- =folio-added=: timestamp string
+- =folio-tags=: list of tags
+- =folio-line=: line number for file bookmarks (when applicable)
+
+* Notes
+- URL title fetching uses =url-retrieve-synchronously= with a timeout and falls
+  back to a URL-based heuristic when no title is found.
+- Opening an entry marks it as read unless it is archived.
+
+* License
+GPL-3.0
