@@ -51,8 +51,8 @@
 (defvar folio--loaded-p nil
   "Non-nil when the database has been loaded.")
 
-(defvar folio--filter-tags nil
-  "Current tag filter list, or nil.")
+(defvar-local folio--filter-tags nil
+  "Current tag filter list for this buffer, or nil for no filter.")
 
 (defcustom folio-list-sort-key 'added
   "Sort key for folio list.
@@ -100,8 +100,8 @@ When nil, rely on `bookmark-save-flag' and Emacs shutdown."
 (defvar-local folio--last-echo-title nil
   "Last entry title echoed in the folio list buffer.")
 
-(defvar-local folio--list-entries nil
-  "Cached entries for the folio list buffer.")
+(defvar folio--list-entries nil
+  "Global cache of folio entries built from `bookmark-alist'.")
 
 (defface folio-title-face
   '((t :weight bold))
@@ -160,7 +160,8 @@ When nil, rely on `bookmark-save-flag' and Emacs shutdown."
 
 (defun folio--invalidate-cache ()
   "Invalidate cached folio entries."
-  (setq folio--list-entries nil))
+  (setq folio--list-entries nil
+        folio--loaded-p nil))
 
 (defun folio--entry-status (entry)
   "Return the status string for ENTRY."
@@ -169,6 +170,10 @@ When nil, rely on `bookmark-save-flag' and Emacs shutdown."
 (defun folio--entry-unread-p (entry)
   "Return non-nil when ENTRY is unread."
   (string= (folio--entry-status entry) folio--status-unread))
+
+(defun folio--entry-read-p (entry)
+  "Return non-nil when ENTRY is read."
+  (string= (folio--entry-status entry) folio--status-read))
 
 (defun folio-bookmark-url-handler (bookmark)
   "Open a URL from BOOKMARK."
@@ -253,23 +258,21 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
 
 (defun folio--bookmarks->db ()
   "Return a list of folio entries from the bookmark database."
-  (let (entries)
-    (dolist (bm bookmark-alist)
-      (let ((name (car bm))
-            (record (cdr bm)))
-        (push (folio--bookmark-record->entry name record) entries)))
-    entries))
+  (mapcar (lambda (bm)
+            (folio--bookmark-record->entry (car bm) (cdr bm)))
+          bookmark-alist))
 
 (defun folio--refresh-db (&optional force)
   "Ensure bookmark data is loaded and cache is up to date.
 
-When FORCE is non-nil, rebuild the cached entries list."
-  (let ((force (if (null force) t force)))
-    (folio--ensure-bookmarks-loaded)
-    (folio--convert-bookmarks)
-    (setq folio--loaded-p t)
-    (when (or force (null folio--list-entries))
-      (setq folio--list-entries (folio--bookmarks->db))))
+When FORCE is non-nil, rebuild the cached entries list unconditionally."
+  (folio--ensure-bookmarks-loaded)
+  (when (folio--convert-bookmarks)
+    (let ((inhibit-message t))
+      (bookmark-save)))
+  (setq folio--loaded-p t)
+  (when (or force (null folio--list-entries))
+    (setq folio--list-entries (folio--bookmarks->db)))
   folio--list-entries)
 
 (defun folio--entries ()
@@ -305,7 +308,7 @@ When FORCE is non-nil, rebuild the cached entries list."
             (added (alist-get 'added entry))
             (line (alist-get 'line entry)))
         (when id (push (cons 'folio-id (copy-sequence id)) record))
-        (when tags (push (cons 'folio-tags (copy-sequence tags)) record))
+        (push (cons 'folio-tags (copy-sequence tags)) record)
         (unless (string-blank-p (or note ""))
           (push (cons 'annotation (copy-sequence note)) record))
         (when status (push (cons 'folio-status status) record))
@@ -375,7 +378,7 @@ When FORCE is non-nil, rebuild the cached entries list."
 
 (defun folio--ensure-loaded ()
   "Ensure the database is loaded."
-  (when (or (not folio--loaded-p) (null folio--list-entries))
+  (unless folio--loaded-p
     (folio--refresh-db))
   folio--loaded-p)
 
@@ -410,28 +413,28 @@ When FORCE is non-nil, rebuild the cached entries list."
   "Store ENTRY as bookmark NAME, removing OLD-NAME when it differs."
   (folio--ensure-bookmarks-loaded)
   (let* ((existing (bookmark-get-bookmark name t))
-         (record (folio--entry->bookmark-record entry))
          (note (alist-get 'note entry))
          (note-blank (string-blank-p (or note "")))
          (has-folio (and existing
                          (assq 'folio (folio--unwrap-bookmark-record existing))))
-         (record (if (and existing note-blank)
-                     (cons (cons 'annotation nil) record)
-                   record))
-         (record (if has-folio
-                     (cons (cons 'folio nil) record)
-                   record))
-         (merged (when (and record existing)
-                   (folio--merge-record-allow-remove
-                    (folio--unwrap-bookmark-record existing)
-                    record
-                    'annotation
-                    'folio))))
-    (when (and old-name (not (string= old-name name)))
-      (bookmark-delete old-name t))
-    (bookmark-store name (or merged record) nil)
-    (folio--invalidate-cache)
-    (folio--save-bookmarks)))
+         (record (folio--entry->bookmark-record entry)))
+    ;; Patch in fields that need explicit nil removal during merge.
+    (when (and existing note-blank)
+      (push (cons 'annotation nil) record))
+    (when has-folio
+      (push (cons 'folio nil) record))
+    (let ((merged (when (and record existing)
+                    (folio--merge-record-allow-remove
+                     (folio--unwrap-bookmark-record existing)
+                     record
+                     'annotation
+                     'folio
+                     'folio-tags))))
+      (when (and old-name (not (string= old-name name)))
+        (bookmark-delete old-name t))
+      (bookmark-store name (or merged record) nil)
+      (folio--invalidate-cache)
+      (folio--save-bookmarks))))
 
 (defun folio--new-id ()
   "Generate a reasonably unique ID string."
@@ -455,18 +458,18 @@ INITIAL-TAGS is a list of strings used as the initial input."
                 "Tags: "
                 choices nil nil initial nil nil))
          (cleaned (folio--clean-tags tags)))
-    (unless (null cleaned) cleaned)))
+    cleaned))
 
 (defun folio--decode-octal-escapes (title)
   "Decode octal escapes like \\342\\200\\234 in TITLE."
   (when (string-match-p "\\\\[0-7]\\{3\\}" title)
     (let* ((octal-decoded
             (replace-regexp-in-string
-             "\\\\([0-7]\\{3\\})"
+             "\\\\[0-7]\\{3\\}"
              (lambda (match)
                (string (string-to-number (substring match 1) 8)))
              title t t))
-           (raw-bytes (string-to-unibyte octal-decoded)))
+           (raw-bytes (encode-coding-string octal-decoded 'iso-8859-1)))
       (condition-case nil
           (decode-coding-string raw-bytes 'utf-8)
         (error octal-decoded)))))
@@ -475,7 +478,7 @@ INITIAL-TAGS is a list of strings used as the initial input."
   "Normalize TITLE parsed from HTML."
   (or (folio--decode-octal-escapes title)
       (condition-case nil
-          (decode-coding-string (string-to-unibyte title) 'utf-8)
+          (decode-coding-string (encode-coding-string title 'iso-8859-1) 'utf-8)
         (error title))))
 
 (defun folio--current-url ()
@@ -592,7 +595,7 @@ INITIAL-TAGS is a list of strings used as the initial input."
   (when tags
     (mapconcat
      (lambda (tag)
-       (let ((face (if row-face row-face 'folio-tags-face)))
+       (let ((face (or row-face 'folio-tags-face)))
          (propertize tag
                      'face face
                      'mouse-face 'highlight
@@ -604,7 +607,7 @@ INITIAL-TAGS is a list of strings used as the initial input."
 
 (defun folio--all-tags ()
   "Return a sorted list of all tags in the database."
-  (sort (delete-dups
+  (sort (seq-uniq
          (apply #'append
                 (mapcar (lambda (entry) (alist-get 'tags entry))
                         (folio--entries))))
@@ -641,13 +644,14 @@ INITIAL-TAGS is a list of strings used as the initial input."
       (string< (or (alist-get 'added b) "")
                (or (alist-get 'added a) ""))))))
 
-(defun folio--capped-column-width (accessor)
-  "Return a width for column using ACCESSOR on each entry."
+(defun folio--capped-column-width (accessor &optional min-width)
+  "Return a width for column using ACCESSOR on each entry.
+MIN-WIDTH sets the floor (default 5)."
   (let ((max-len 0))
     (dolist (entry (seq-filter #'folio--matches-filter (folio--entries-for-list)))
       (setq max-len
             (max max-len (string-width (or (funcall accessor entry) "")))))
-    (max 5 max-len)))
+    (max (or min-width 5) max-len)))
 
 (defun folio--string-display-width (string)
   "Return the display width of STRING in columns."
@@ -660,14 +664,10 @@ INITIAL-TAGS is a list of strings used as the initial input."
     (string-width string)))
 
 (defun folio--tags-column-width ()
-  "Return uncapped width for the tags column."
-  (let ((max-len 0))
-    (dolist (entry (seq-filter #'folio--matches-filter (folio--entries-for-list)))
-      (setq max-len
-            (max max-len
-                 (string-width
-                  (folio--format-tags (alist-get 'tags entry))))))
-    (max 4 max-len)))
+  "Return the width for the tags column."
+  (folio--capped-column-width
+   (lambda (e) (folio--format-tags (alist-get 'tags e)))
+   4))
 
 (defun folio--nerd-icons-available-p ()
   "Return non-nil when Nerd Icons can be used."
@@ -740,7 +740,7 @@ INITIAL-TAGS is a list of strings used as the initial input."
                        (alist-get 'path entry)
                        ""))
          (unread (folio--entry-unread-p entry))
-         (title-face (if row-face row-face 'folio-title-face))
+         (title-face (or row-face 'folio-title-face))
          (icon (folio--entry-icon entry row-face))
          (title-text (or (alist-get 'title entry) ""))
          ;; Keep the title text face even when the icon has its own face.
@@ -753,7 +753,7 @@ INITIAL-TAGS is a list of strings used as the initial input."
                      (t 'folio-type-url-face)))
          (type (propertize type-text 'face type-face))
          (location (propertize (truncate-string-to-width location 36 nil nil "...")
-                               'face (if row-face row-face 'folio-location-face)
+                               'face (or row-face 'folio-location-face)
                                'mouse-face 'highlight
                                'help-echo "Open this entry"
                                'keymap folio--location-map))
@@ -773,7 +773,7 @@ INITIAL-TAGS is a list of strings used as the initial input."
                                        `(:inherit (,row-face folio-note-face))
                                      'folio-note-face))))
          (added (propertize (or (alist-get 'added entry) "")
-                            'face (if row-face row-face 'folio-timestamp-face))))
+                            'face (or row-face 'folio-timestamp-face))))
     (add-text-properties 0 (length title)
                          (list 'mouse-face 'highlight
                                'help-echo "Open this entry"
@@ -809,20 +809,25 @@ INITIAL-TAGS is a list of strings used as the initial input."
           (folio-list-refresh))
       (message "Folio: no tag at point"))))
 
+(defun folio--save-entry (id entry)
+  "Persist ENTRY for ID without refreshing the list."
+  (folio--replace-entry id entry))
+
 (defun folio--commit-entry (id entry)
   "Persist ENTRY for ID and refresh the list."
-  (folio--replace-entry id entry)
+  (folio--save-entry id entry)
   (folio-list-refresh))
 
 (defun folio--refresh-keep-position ()
-  "Refresh the folio list and keep point near its previous position."
-  (let ((line (line-number-at-pos))
-        (column (current-column))
+  "Refresh the folio list and restore point to the same entry."
+  (let ((id (tabulated-list-get-id))
         (start (window-start)))
     (folio-list-refresh)
-    (goto-char (point-min))
-    (forward-line (1- (min line (line-number-at-pos (point-max)))))
-    (move-to-column column)
+    (when id
+      (goto-char (point-min))
+      (while (and (not (eobp))
+                  (not (equal (tabulated-list-get-id) id)))
+        (forward-line 1)))
     (set-window-start (selected-window) start)))
 
 ;;;###autoload
@@ -866,14 +871,10 @@ FILE is read from the minibuffer with a helpful default."
     (message "Folio: saved file")))
 
 (defun folio-list-open ()
-  "Open the entry at point."
+  "Open the entry at point.
+Marks the entry as read via the bookmark-jump advice unless it is archived."
   (interactive)
-  (folio--with-entry-at-point (id entry)
-    (let ((status (folio--entry-status entry)))
-      (when (and (not (string= status folio--status-archived))
-                 (not (string= status folio--status-read)))
-        (setf (alist-get 'status entry) folio--status-read)
-        (folio--commit-entry id entry)))
+  (folio--with-entry-at-point (_id entry)
     (let ((name (alist-get 'bookmark entry)))
       (if name
           (bookmark-jump name)
@@ -883,8 +884,7 @@ FILE is read from the minibuffer with a helpful default."
   "Toggle read/unread status for entry at point."
   (interactive)
   (folio--with-entry-at-point (id entry)
-    (let* ((status (folio--entry-status entry))
-           (new-status (if (string= status folio--status-read)
+    (let* ((new-status (if (folio--entry-read-p entry)
                            folio--status-unread
                          folio--status-read)))
       (setf (alist-get 'status entry) new-status)
@@ -952,7 +952,7 @@ FILE is read from the minibuffer with a helpful default."
          (id folio--note-edit-id)
          (entry folio--note-edit-entry))
     (setf (alist-get 'note entry) note)
-    (folio--commit-entry id entry)
+    (folio--save-entry id entry)
     (let ((buf (get-buffer "*Folio*")))
       (when (buffer-live-p buf)
         (let ((win (get-buffer-window buf t)))
@@ -1044,6 +1044,7 @@ FILE is read from the minibuffer with a helpful default."
 
 (define-derived-mode folio-list-mode tabulated-list-mode "Folio"
   "Major mode for listing folio entries."
+  (make-local-variable 'folio-list-sort-key)
   (setq tabulated-list-format (folio--tabulated-list-format))
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key nil)
@@ -1131,7 +1132,9 @@ ORIG is the original function and ARGS are its arguments."
          (name (car-safe pair))
          (record (cdr-safe pair)))
     (when record
-      (let* ((status (or (alist-get 'folio-status record) ""))
+      ;; Work on a copy so we do not mutate the live bookmark-alist.
+      (let* ((record (copy-alist record))
+             (status (or (alist-get 'folio-status record) ""))
              (folio-id (alist-get 'folio-id record))
              (now (format-time-string "%Y-%m-%d %H:%M")))
         (unless folio-id
@@ -1200,6 +1203,18 @@ _ARGS are ignored."
 (when (fboundp 'bookmark-load)
   (unless (advice-member-p #'folio--bookmark-change-advice 'bookmark-load)
     (advice-add 'bookmark-load :after #'folio--bookmark-change-advice)))
+
+(defun folio-unload-function ()
+  "Remove Folio advice and hooks when `unload-feature' is called.
+Returning nil tells `unload-feature' to proceed with normal unloading."
+  (advice-remove 'tabulated-list-sort #'folio--tabulated-list-sort-advice)
+  (advice-remove 'bookmark-jump       #'folio--bookmark-jump-advice)
+  (advice-remove 'bookmark-store      #'folio--bookmark-change-advice)
+  (advice-remove 'bookmark-delete     #'folio--bookmark-change-advice)
+  (when (fboundp 'bookmark-load)
+    (advice-remove 'bookmark-load #'folio--bookmark-change-advice))
+  (remove-hook 'bookmark-after-jump-hook #'folio--bookmark-after-jump)
+  nil)
 
 (provide 'folio)
 ;;; folio.el ends here
