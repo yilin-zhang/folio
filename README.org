@@ -37,29 +37,31 @@ the built-in bookmark. For existing and new bookmarks, it adds folio-specific
 fields prefixed with =folio-*=, plus a =handler= for URL and file entries.
 
 * List buffer key bindings
-| Key     | Command                  | Description           |
-|---------+--------------------------+-----------------------|
-| RET / o | =folio-list-open=          | Open entry at point   |
-| /       | =folio-list-filter-tags=   | Filter by tags        |
-| *       | =folio-list-toggle-read=   | Toggle read/unread    |
-| a       | =folio-list-archive=       | Archive entry         |
-| u       | =folio-list-unarchive=     | Unarchive entry       |
-| e l     | =folio-list-edit-title=    | Edit title            |
-| +       | =folio-list-edit-note=     | Edit note             |
-| e u     | =folio-list-edit-location= | Edit URL or file path |
-| e t     | =folio-list-edit-tags=     | Edit tags             |
-| d       | =folio-list-delete=        | Delete entry          |
-| g       | =folio-list-refresh=       | Refresh list          |
-| ; l     | =folio-list-sort-by-title= | Sort by title         |
-| ; t     | =folio-list-sort-by-time=  | Sort by added time    |
-| -       | =folio-add-url=            | Capture URL           |
-| =       | =folio-add-file=           | Capture file          |
+| Key     | Command                    | Description                         |
+|---------+----------------------------+-------------------------------------|
+| RET / o | =folio-list-open=          | Open entry at point                 |
+| /       | =folio-list-filter-tags=   | Filter by tags                      |
+| *       | =folio-list-toggle-read=   | Toggle read/unread                  |
+| r       | =folio-list-edit-title=    | Rename (edit title)                 |
+| +       | =folio-list-edit-note=     | Edit note                           |
+| l       | =folio-list-edit-location= | Edit URL or file path               |
+| t       | =folio-list-edit-tags=     | Edit tags on marked or at point     |
+| d       | =folio-list-delete=        | Delete marked entries or at point   |
+| m       | =folio-list-mark=          | Toggle mark (or mark region)        |
+| u       | =folio-list-unmark=        | Unmark at point                     |
+| U       | =folio-list-unmark-all=    | Clear all marks                     |
+| g       | =folio-list-refresh=       | Refresh list                        |
+| ; l     | =folio-list-sort-by-title= | Sort by title                       |
+| ; t     | =folio-list-sort-by-time=  | Sort by added time                  |
+| -       | =folio-add-url=            | Capture URL                         |
+| =       | =folio-add-file=           | Capture file                        |
 
 * Customization
 - =folio-url-open-function=: function used to open URLs (default =browse-url=)
 - =folio-list-sort-key=: default sort key (=added= or =title=)
-- =folio-nerd-icons-enabled=: enable Nerd Icons in the list (requires =nerd-icons=)
-- =folio-save-after-change=: save bookmarks immediately after Folio updates
+
+Nerd Font icons render automatically in the Type column when the optional
+=nerd-icons= package is installed.
 
 * Data storage
 Folio stores entries in your bookmark file with extra fields:
@@ -70,9 +72,12 @@ Folio stores entries in your bookmark file with extra fields:
 - =folio-line=: line number for file bookmarks (when applicable)
 
 * Notes
-- URL title fetching uses =url-retrieve-synchronously= with a timeout and falls
-  back to a URL-based heuristic when no title is found.
-- Opening an entry marks it as read unless it is archived.
+- URL titles are derived from the URL string itself (host + last path
+  segment) — no network calls.
+- Opening an entry marks it as read.
+- Non-folio bookmarks appear in the list automatically and are adopted
+  (gain =folio-id=, =folio-status=, =folio-added=) the first time you act
+  on them through folio.
 
 * License
 GPL-3.0
