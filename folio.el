@@ -338,7 +338,6 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
          (record (folio--entry->bookmark-record entry)))
     (when record
       (bookmark-store bm-name record nil))
-    (folio--invalidate-cache)
     bm-name))
 
 (defun folio--store-entry-with-name (entry name &optional old-name)
@@ -358,8 +357,7 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
                      'folio-tags))))
       (when (and old-name (not (string= old-name name)))
         (bookmark-delete old-name t))
-      (bookmark-store name (or merged record) nil)
-      (folio--invalidate-cache))))
+      (bookmark-store name (or merged record) nil))))
 
 (defun folio--replace-entry (id new-entry)
   "Replace entry with ID by NEW-ENTRY."
@@ -375,8 +373,7 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
   (folio--ensure-bookmarks-loaded)
   (let ((name (folio--bookmark-name-for-id id)))
     (when name
-      (bookmark-delete name t)
-      (folio--invalidate-cache))))
+      (bookmark-delete name t))))
 
 (defun folio--save-entry (id entry)
   "Persist ENTRY for ID without refreshing the list."
@@ -427,10 +424,11 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
 
 (defun folio--all-tags ()
   "Return a sorted unique list of all tags in the database."
-  (sort (seq-uniq
-         (apply #'append
-                (mapcar (lambda (entry) (alist-get 'tags entry))
-                        (folio--entries))))
+  ;; copy-sequence: mapcan splices its lists, so without copying it would
+  ;; mutate the per-entry tags lists.
+  (sort (seq-uniq (mapcan (lambda (entry)
+                            (copy-sequence (alist-get 'tags entry)))
+                          (folio--entries)))
         #'string-lessp))
 
 ;;;; Filtering and sorting
@@ -539,35 +537,28 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
       (_
        (nerd-icons-octicon "nf-oct-link" :face 'folio-type-url-face)))))
 
+(defun folio--type-letter (entry)
+  "Return a single-letter type indicator for ENTRY."
+  (let* ((type-text (or (alist-get 'type entry) ""))
+         (face (if (string= type-text "file")
+                   'folio-type-file-face
+                 'folio-type-url-face))
+         (letter (pcase type-text
+                   ("file"     "F")
+                   ("bookmark" "B")
+                   (_          "U"))))
+    (propertize letter 'face face)))
+
 ;;;; List display
 
-(defun folio--capped-column-width (accessor &optional min-width)
-  "Return a column width based on ACCESSOR over the cached entries.
-MIN-WIDTH sets the floor (default 5).  Reads from `folio--list-entries'
-directly, so the caller must have populated the cache."
-  (let ((max-len 0))
-    (dolist (entry (seq-filter #'folio--matches-filter
-                               (or folio--list-entries '())))
-      (setq max-len
-            (max max-len (string-width (or (funcall accessor entry) "")))))
-    (max (or min-width 5) max-len)))
-
-(defun folio--tags-column-width ()
-  "Return the width for the tags column."
-  (folio--capped-column-width
-   (lambda (e) (folio--format-tags (alist-get 'tags e)))
-   4))
-
-(defun folio--tabulated-list-format ()
-  "Return the tabulated list format for folio entries."
-  (vector
-   (list "Added" 16 t)
-   (list "Type" (folio--capped-column-width (lambda (e) (alist-get 'type e))) t)
-   (list "Title" (folio--capped-column-width (lambda (e) (alist-get 'title e)) 5) t)
-   (list "Tags" (folio--tags-column-width) t)
-   (list "Unread" 6 t)
-   (list "Note" 4 t)
-   (list "Location" 36 t)))
+(defun folio--list-format (title-w tags-w)
+  "Return the tabulated-list format with the given dynamic column widths."
+  (vector (list "Added" 16 t)
+          (list "Title" title-w t)
+          (list "Tags" tags-w t)
+          (list "Unread" 6 t)
+          (list "Note" 4 t)
+          (list "Location" 36 t)))
 
 (defun folio--entry->row (entry)
   "Convert ENTRY to a tabulated-list row."
@@ -576,13 +567,10 @@ directly, so the caller must have populated the cache."
                             ""))
          (unread (folio--entry-unread-p entry))
          (title-text (or (alist-get 'title entry) ""))
-         (title (propertize title-text 'face 'folio-title-face))
-         (type-text (or (alist-get 'type entry) ""))
-         (type-face (if (string= type-text "file")
-                        'folio-type-file-face
-                      'folio-type-url-face))
-         (icon (folio--entry-icon entry))
-         (type-cell (or icon (propertize type-text 'face type-face)))
+         (type-indicator (or (folio--entry-icon entry)
+                             (folio--type-letter entry)))
+         (title (concat type-indicator " "
+                        (propertize title-text 'face 'folio-title-face)))
          (location (propertize (truncate-string-to-width location-text 36 nil nil "...")
                                'face 'folio-location-face
                                'mouse-face 'highlight
@@ -604,20 +592,29 @@ directly, so the caller must have populated the cache."
                                'keymap folio--location-map)
                          title)
     (list (alist-get 'id entry)
-          (vector added type-cell title tags unread-flag note location))))
+          (vector added title tags unread-flag note location))))
 
 (defun folio-list-refresh ()
   "Refresh the folio list buffer."
   (interactive)
   (folio--refresh-db)
-  (setq tabulated-list-format (folio--tabulated-list-format))
-  (tabulated-list-init-header)
-  (setq tabulated-list-sort-key nil)
-  (setq tabulated-list-entries
-        (mapcar #'folio--entry->row
-                (seq-sort #'folio--entry<
-                          (seq-filter #'folio--matches-filter
-                                      (folio--entries)))))
+  (let ((entries (seq-sort #'folio--entry<
+                           (seq-filter #'folio--matches-filter
+                                       (folio--entries))))
+        (title-w 5) (tags-w 4)
+        rows)
+    (dolist (entry entries)
+      (let ((row (folio--entry->row entry)))
+        ;; Measure widths from the built row to avoid reformatting.
+        ;; Row vector: [added title tags unread note location]
+        (let ((vec (cadr row)))
+          (setq title-w (max title-w (string-width (aref vec 1)))
+                tags-w  (max tags-w  (string-width (aref vec 2)))))
+        (push row rows)))
+    (setq tabulated-list-format (folio--list-format title-w tags-w))
+    (tabulated-list-init-header)
+    (setq tabulated-list-sort-key nil)
+    (setq tabulated-list-entries (nreverse rows)))
   (tabulated-list-print t)
   (folio-list--apply-marks))
 
@@ -819,10 +816,8 @@ with its current tags."
 
 (defun folio-list--marked-ids ()
   "Return the list of marked entry IDs in the current buffer."
-  (let (ids)
-    (when folio-list--marked
-      (maphash (lambda (id _) (push id ids)) folio-list--marked))
-    (nreverse ids)))
+  (when folio-list--marked
+    (hash-table-keys folio-list--marked)))
 
 (defun folio-list--delete-mark-overlays (ovs)
   "Delete overlay pair OVS (a cons of two overlays)."
@@ -1024,7 +1019,6 @@ NAME is the bookmark name, like `bookmark-set'."
                         (folio-added . ,now)))
              (merged (folio--merge-record-if-missing record updates)))
         (bookmark-store name merged nil)
-        (folio--invalidate-cache)
         (folio--refresh-list-buffer)
         (message "Folio: saved bookmark")))))
 
@@ -1055,9 +1049,14 @@ NAME is the bookmark name, like `bookmark-set'."
 (define-derived-mode folio-list-mode tabulated-list-mode "Folio"
   "Major mode for listing folio entries."
   (make-local-variable 'folio-list-sort-key)
+  ;; Drop any overlays held by a prior init of this buffer before we
+  ;; replace the hash tables, otherwise the old overlays leak in the buffer.
+  (folio-list--clear-marks)
   (setq folio-list--marked (make-hash-table :test #'equal))
   (setq folio-list--mark-overlays (make-hash-table :test #'equal))
-  (setq tabulated-list-format (folio--tabulated-list-format))
+  ;; Placeholder format with min widths; `folio-list-refresh' replaces it
+  ;; with widths derived from the actual entries.
+  (setq tabulated-list-format (folio--list-format 5 4))
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key nil)
   (add-hook 'tabulated-list-revert-hook #'folio-list-refresh nil t)
@@ -1067,7 +1066,6 @@ NAME is the bookmark name, like `bookmark-set'."
 (defun folio-list ()
   "Show the folio list buffer."
   (interactive)
-  (folio--entries)
   (let ((buf (get-buffer-create "*Folio*")))
     (with-current-buffer buf
       (folio-list-mode)
@@ -1084,17 +1082,21 @@ NAME is the bookmark name, like `bookmark-set'."
     (when record
       (let* ((record (copy-alist record))
              (status (or (alist-get 'folio-status record) ""))
-             (folio-id (alist-get 'folio-id record))
-             (now (format-time-string "%Y-%m-%d %H:%M")))
-        (unless folio-id
-          (setf (alist-get 'folio-id record) (copy-sequence (folio--new-id)))
-          (setf (alist-get 'folio-status record) folio--status-unread)
-          (setf (alist-get 'folio-added record) now)
-          (setq status folio--status-unread))
-        (unless (string= status folio--status-read)
+             (needs-adopt (null (alist-get 'folio-id record)))
+             (needs-mark (not (string= status folio--status-read))))
+        (when (or needs-adopt needs-mark)
+          (when needs-adopt
+            (let ((now (format-time-string "%Y-%m-%d %H:%M")))
+              (setf (alist-get 'folio-id record) (copy-sequence (folio--new-id)))
+              (setf (alist-get 'folio-added record) now)))
           (setf (alist-get 'folio-status record) folio--status-read)
           (bookmark-store name record nil)
-          (folio--refresh-list-buffer))))))
+          ;; Skip the redraw when no window is showing the list buffer; the
+          ;; cache invalidation advice has already marked it stale, and the
+          ;; next `folio-list' call will rebuild from fresh data.
+          (let ((buf (get-buffer "*Folio*")))
+            (when (and buf (get-buffer-window buf t))
+              (folio--refresh-list-buffer))))))))
 
 (defun folio--bookmark-external-p (bookmark)
   "Return non-nil when BOOKMARK doesn't jump to a buffer."
