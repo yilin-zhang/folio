@@ -9,9 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Read Emacs version
+        id: emacs-version
+        run: echo "version=$(tr -d '[:space:]' < .emacs-version)" >> "$GITHUB_OUTPUT"
       - uses: purcell/setup-emacs@master
         with:
-          version: 30.2
+          version: ${{ steps.emacs-version.outputs.version }}
       - name: Start Emacs server
         run: emacs --daemon=folio-ci
       - name: Run checks
