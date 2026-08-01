@@ -116,7 +116,9 @@ Marks live in two buffer-local hash tables initialized by `folio-list-mode`:
 - `folio-list-unmark` / `folio-list-unmark-all` remove marks.
 - `folio-list-delete` acts on marked entries if any are marked, otherwise on
   the entry at point. Plain bookmarks without a `folio-id` use their bookmark
-  name as the fallback ID and can be deleted before adoption.
+  name as the fallback ID and can be deleted before adoption. After deletion,
+  point moves to the nearest surviving row, preferring the following row when
+  two candidates are equally near.
 - `folio-list-edit-tags` acts on marked entries if any are marked: prompts
   for a tag list and **replaces** the tags on each marked entry after
   confirmation. Without marks it edits the entry at point, seeded with its

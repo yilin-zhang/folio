@@ -617,17 +617,54 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
         (when (derived-mode-p 'folio-list-mode)
           (folio-list-refresh))))))
 
-(defun folio--refresh-keep-position ()
-  "Refresh the folio list and restore point to the same entry."
-  (let ((id (tabulated-list-get-id))
-        (start (window-start)))
-    (folio-list-refresh)
-    (when id
+(defun folio-list--goto-id (id)
+  "Move point to the row whose tabulated-list ID equals ID."
+  (when id
+    (let (position)
+      (save-excursion
+        (goto-char (point-min))
+        (while (and (not position) (not (eobp)))
+          (when (equal (tabulated-list-get-id) id)
+            (setq position (point)))
+          (forward-line 1)))
+      (when position
+        (goto-char position)))))
+
+(defun folio-list--nearest-surviving-id (deleted-ids)
+  "Return the nearest row ID not listed in DELETED-IDS.
+Prefer a following row when two surviving rows are equally near point."
+  (let ((origin-line (line-number-at-pos))
+        best-id best-distance best-forward)
+    (save-excursion
       (goto-char (point-min))
-      (while (and (not (eobp))
-                  (not (equal (tabulated-list-get-id) id)))
-        (forward-line 1)))
-    (set-window-start (selected-window) start)))
+      (let ((line 1))
+        (while (not (eobp))
+          (let ((id (tabulated-list-get-id)))
+            (when (and id (not (member id deleted-ids)))
+              (let* ((distance (abs (- line origin-line)))
+                     (forward (>= line origin-line)))
+                (when (or (null best-distance)
+                          (< distance best-distance)
+                          (and (= distance best-distance)
+                               forward
+                               (not best-forward)))
+                  (setq best-id id
+                        best-distance distance
+                        best-forward forward)))))
+          (forward-line 1)
+          (cl-incf line))))
+    best-id))
+
+(defun folio--refresh-keep-position (&optional fallback-id)
+  "Refresh the list and restore point to its entry or FALLBACK-ID."
+  (let* ((id (tabulated-list-get-id))
+         (window (get-buffer-window (current-buffer) t))
+         (start (and window (window-start window))))
+    (folio-list-refresh)
+    (or (folio-list--goto-id id)
+        (folio-list--goto-id fallback-id))
+    (when (and window (window-live-p window))
+      (set-window-start window start))))
 
 ;;;; Entry at point
 
@@ -757,11 +794,12 @@ with its current tags."
   (let ((ids (folio-list--marked-ids)))
     (if ids
         (when (yes-or-no-p (format "Delete %d marked entries? " (length ids)))
-          (dolist (id ids)
-            (folio--delete-entry id))
-          (folio-list--clear-marks)
-          (folio-list-refresh)
-          (message "Folio: deleted %d entries" (length ids)))
+          (let ((fallback-id (folio-list--nearest-surviving-id ids)))
+            (dolist (id ids)
+              (folio--delete-entry id))
+            (folio-list--clear-marks)
+            (folio--refresh-keep-position fallback-id)
+            (message "Folio: deleted %d entries" (length ids))))
       (folio--with-entry-at-point (id entry)
         (let ((name (or (alist-get 'bookmark entry)
                         (folio--bookmark-name-for-id id))))
@@ -769,8 +807,9 @@ with its current tags."
            ((not name)
             (message "Folio: no bookmark name for entry"))
            ((y-or-n-p "Delete this entry? ")
-            (folio--delete-entry id)
-            (folio--refresh-keep-position))
+            (let ((fallback-id (folio-list--nearest-surviving-id (list id))))
+              (folio--delete-entry id)
+              (folio--refresh-keep-position fallback-id)))
            (t (message "Folio: delete canceled"))))))))
 
 (defun folio-list-filter-tags (tags)

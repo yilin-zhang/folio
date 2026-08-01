@@ -466,4 +466,40 @@ into an existing record with tags removes the tags key entirely."
                (ert-fail "capture should not run"))))
     (should-error (folio-add-url "   ") :type 'user-error)))
 
+;;; ─── Delete selection ───────────────────────────────────────────────────────
+
+(defun folio-test--set-list-ids (ids)
+  "Populate the current tabulated list buffer with IDS."
+  (setq tabulated-list-format [("Title" 20 t)]
+        tabulated-list-entries
+        (mapcar (lambda (id) (list id (vector id))) ids))
+  (tabulated-list-init-header)
+  (tabulated-list-print t))
+
+(ert-deftest folio-list-delete/selects-following-entry ()
+  "Deleting a middle entry keeps point on its row's following neighbor."
+  (with-temp-buffer
+    (tabulated-list-mode)
+    (folio-test--set-list-ids '("alpha" "beta" "gamma"))
+    (folio-list--goto-id "beta")
+    (let ((fallback (folio-list--nearest-surviving-id '("beta"))))
+      (cl-letf (((symbol-function 'folio-list-refresh)
+                 (lambda ()
+                   (folio-test--set-list-ids '("alpha" "gamma")))))
+        (folio--refresh-keep-position fallback))
+      (should (equal (tabulated-list-get-id) "gamma")))))
+
+(ert-deftest folio-list-delete/selects-previous-after-last-entry ()
+  "Deleting the final entry moves point to the preceding neighbor."
+  (with-temp-buffer
+    (tabulated-list-mode)
+    (folio-test--set-list-ids '("alpha" "beta" "gamma"))
+    (folio-list--goto-id "gamma")
+    (let ((fallback (folio-list--nearest-surviving-id '("gamma"))))
+      (cl-letf (((symbol-function 'folio-list-refresh)
+                 (lambda ()
+                   (folio-test--set-list-ids '("alpha" "beta")))))
+        (folio--refresh-keep-position fallback))
+      (should (equal (tabulated-list-get-id) "beta")))))
+
 ;;; folio-test.el ends here
