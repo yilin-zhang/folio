@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: purcell/setup-emacs@master
+        with:
+          version: 30.2
+      - name: Start Emacs server
+        run: emacs --daemon=folio-ci
+      - name: Run checks
+        run: ./scripts/check-all.sh
+        env:
+          FOLIO_EMACS_SERVER: folio-ci

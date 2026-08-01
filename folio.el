@@ -1,4 +1,4 @@
-;;; folio.el --- Bookmark enhancement for Emacs -*- lexical-binding: t; -*-
+;;; folio.el --- Enhanced bookmark management -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2026
 
@@ -59,8 +59,11 @@ Valid values are \\='added or \\='title."
 (defconst folio--status-read "read"
   "Status string for read entries.")
 
-(defvar folio--list-entries nil
-  "Cached entries built from `bookmark-alist'.  Nil means cold cache.")
+(defconst folio--cold-cache (make-symbol "folio-cold-cache")
+  "Sentinel used when the Folio entry cache is cold.")
+
+(defvar folio--list-entries folio--cold-cache
+  "Cached entries built from `bookmark-alist'.")
 
 (defvar-local folio--filter-tags nil
   "Tag filter list for the current list buffer, or nil for no filter.")
@@ -153,13 +156,14 @@ Initialized by `folio-list-mode'.")
 
 (defun folio--invalidate-cache ()
   "Clear the cached entries list."
-  (setq folio--list-entries nil))
+  (setq folio--list-entries folio--cold-cache))
 
 (defun folio--entries ()
   "Return cached folio entries, rebuilding from bookmarks when cold."
   (folio--ensure-bookmarks-loaded)
-  (or folio--list-entries
-      (setq folio--list-entries (folio--bookmarks->db))))
+  (when (eq folio--list-entries folio--cold-cache)
+    (setq folio--list-entries (folio--bookmarks->db)))
+  folio--list-entries)
 
 (defun folio--refresh-db ()
   "Invalidate the cache and reload entries from bookmarks."
@@ -169,7 +173,9 @@ Initialized by `folio-list-mode'.")
 (defun folio--bookmarks->db ()
   "Return a fresh list of folio entries from `bookmark-alist'."
   (mapcar (lambda (bm)
-            (folio--bookmark-record->entry (car bm) (cdr bm)))
+            (folio--bookmark-record->entry
+             (bookmark-name-from-full-record bm)
+             (bookmark-get-bookmark-record bm)))
           bookmark-alist))
 
 ;;;; Entry model
@@ -197,12 +203,6 @@ Initialized by `folio-list-mode'.")
   (seq-find (lambda (entry)
               (string= id (alist-get 'id entry)))
             (folio--entries)))
-
-(defun folio--unwrap-bookmark-record (record)
-  "Return bookmark RECORD without a leading name cell."
-  (if (and (consp record) (stringp (car record)) (consp (cdr record)))
-      (cdr record)
-    record))
 
 (defun folio--bookmark-record->entry (name record)
   "Convert bookmark NAME and RECORD into a folio entry."
@@ -292,25 +292,21 @@ is nil instead of being set to nil."
   "Return (NAME . RECORD) for BOOKMARK, or nil."
   (let* ((name (cond
                 ((stringp bookmark) bookmark)
-                ((and (consp bookmark) (stringp (car bookmark))) (car bookmark))))
-         (record (cond
-                  ((and (consp bookmark)
-                        (stringp (car bookmark))
-                        (consp (cdr bookmark)))
-                   (cdr bookmark))
-                  ((and (consp bookmark) (alist-get 'url bookmark))
-                   bookmark)
-                  ((fboundp 'bookmark-get-bookmark-record)
-                   (bookmark-get-bookmark-record (or name bookmark)))
-                  (name (bookmark-get-bookmark name t)))))
+                ((consp bookmark)
+                 (bookmark-name-from-full-record bookmark))))
+         (record (and name (bookmark-get-bookmark-record bookmark))))
     (when (and name record)
-      (cons name (folio--unwrap-bookmark-record record)))))
+      (cons name record))))
 
 (defun folio--bookmark-name-for-id (id)
   "Return the bookmark name for folio ID, or nil."
-  (car (seq-find (lambda (bm)
-                   (string= id (alist-get 'folio-id (cdr bm))))
-                 bookmark-alist)))
+  (or (car (seq-find (lambda (bm)
+                       (equal id (alist-get 'folio-id (cdr bm))))
+                     bookmark-alist))
+      (car (seq-find (lambda (bm)
+                       (and (null (alist-get 'folio-id (cdr bm)))
+                            (equal id (car bm))))
+                     bookmark-alist))))
 
 (defun folio--unique-bookmark-name (base &optional existing-name)
   "Return a unique bookmark name based on BASE.
@@ -351,22 +347,22 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
       (push (cons 'annotation nil) record))
     (let ((merged (when (and record existing)
                     (folio--merge-record-allow-remove
-                     (folio--unwrap-bookmark-record existing)
+                     (bookmark-get-bookmark-record existing)
                      record
                      'annotation
                      'folio-tags))))
+      (bookmark-store name (or merged record) nil)
       (when (and old-name (not (string= old-name name)))
-        (bookmark-delete old-name t))
-      (bookmark-store name (or merged record) nil))))
+        (bookmark-delete old-name t)))))
 
-(defun folio--replace-entry (id new-entry)
-  "Replace entry with ID by NEW-ENTRY."
+(defun folio--save-entry (id entry)
+  "Persist ENTRY for ID without refreshing the list."
   (folio--ensure-bookmarks-loaded)
-  (let* ((name (or (alist-get 'bookmark new-entry)
+  (let* ((name (or (alist-get 'bookmark entry)
                    (folio--bookmark-name-for-id id)))
-         (record (folio--entry->bookmark-record new-entry)))
+         (record (folio--entry->bookmark-record entry)))
     (when (and name record)
-      (folio--store-entry-with-name new-entry name))))
+      (folio--store-entry-with-name entry name))))
 
 (defun folio--delete-entry (id)
   "Delete entry with ID."
@@ -374,10 +370,6 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
   (let ((name (folio--bookmark-name-for-id id)))
     (when name
       (bookmark-delete name t))))
-
-(defun folio--save-entry (id entry)
-  "Persist ENTRY for ID without refreshing the list."
-  (folio--replace-entry id entry))
 
 (defun folio--commit-entry (id entry)
   "Persist ENTRY for ID and refresh the list."
@@ -597,10 +589,9 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
 (defun folio-list-refresh ()
   "Refresh the folio list buffer."
   (interactive)
-  (folio--refresh-db)
-  (let ((entries (seq-sort #'folio--entry<
-                           (seq-filter #'folio--matches-filter
-                                       (folio--entries))))
+  (let ((entries (seq-sort
+                  #'folio--entry<
+                  (seq-filter #'folio--matches-filter (folio--refresh-db))))
         (title-w 5) (tags-w 4)
         rows)
     (dolist (entry entries)
@@ -688,13 +679,17 @@ with its current tags."
   (interactive)
   (let ((marked-ids (folio-list--marked-ids)))
     (if marked-ids
-        (let ((tags (folio--read-tags)))
+        (let ((tags (folio--read-tags))
+              (entries (folio--entries)))
           (when (yes-or-no-p
                  (format "Set tags %s on %d marked entries? "
                          (if tags (folio--format-tags tags) "(none)")
                          (length marked-ids)))
             (dolist (id marked-ids)
-              (when-let ((entry (folio--find-entry id)))
+              (when-let ((entry (seq-find
+                                 (lambda (candidate)
+                                   (equal id (alist-get 'id candidate)))
+                                 entries)))
                 (setf (alist-get 'tags entry) tags)
                 (folio--save-entry id entry)))
             (folio-list--clear-marks)
@@ -744,7 +739,9 @@ with its current tags."
     (pcase (alist-get 'type entry)
       ("url"
        (let* ((current (or (alist-get 'url entry) ""))
-              (url (read-string "URL: " current)))
+              (url (folio--normalize-url (read-string "URL: " current))))
+         (unless url
+           (user-error "Folio: URL cannot be empty"))
          (setf (alist-get 'url entry) url)
          (folio--commit-entry id entry)))
       ("file"
@@ -976,7 +973,8 @@ URL is read from the minibuffer with a helpful default."
   (interactive
    (list (read-string "URL: " (folio--current-url))))
   (folio--ensure-bookmarks-loaded)
-  (let* ((url (or (folio--normalize-url url) url))
+  (let* ((url (or (folio--normalize-url url)
+                  (user-error "Folio: URL cannot be empty")))
          (entry (folio--capture-entry
                  "url"
                  (folio--guess-title-from-url url)
@@ -1012,7 +1010,7 @@ NAME is the bookmark name, like `bookmark-set'."
   (bookmark-set name)
   (let ((record (bookmark-get-bookmark name t)))
     (when record
-      (let* ((record (folio--unwrap-bookmark-record record))
+      (let* ((record (bookmark-get-bookmark-record record))
              (now (format-time-string "%Y-%m-%d %H:%M"))
              (updates `((folio-id . ,(copy-sequence (folio--new-id)))
                         (folio-status . ,folio--status-unread)

@@ -2,7 +2,7 @@
 
 Folio builds on Emacs's built-in bookmark system. It stores URLs and local files
 in your bookmark file and provides an alternative list UI for editing,
-filtering, sorting, and adding tags, notes, and read/archive status.
+filtering, sorting, and adding tags, notes, and read status.
 
 This plugin involved quite a bit of vibe coding. The code is messy and bloated.
 Since I'm not very familiar with the full feature set of the built-in bookmark,
@@ -20,10 +20,7 @@ it, feel free to use it, hack on it, or send PRs to improve it.
              folio-add-file
              ;; The line below is important,
              ;; otherwise the first jump from bookmark won't work.
-             folio-bookmark-url-handler)
-  :config
-  ;; If you have nerd-icons installed:
-  (setq folio-nerd-icons-enabled t))
+             folio-bookmark-url-handler))
 #+end_src
 
 * Quick start
@@ -60,16 +57,15 @@ fields prefixed with =folio-*=, plus a =handler= for URL and file entries.
 - =folio-url-open-function=: function used to open URLs (default =browse-url=)
 - =folio-list-sort-key=: default sort key (=added= or =title=)
 
-Nerd Font icons render automatically in the Type column when the optional
+Nerd Font icons render automatically beside titles when the optional
 =nerd-icons= package is installed.
 
 * Data storage
 Folio stores entries in your bookmark file with extra fields:
 - =folio-id=: unique identifier
-- =folio-status=: =unread=, =read=, or =archived=
+- =folio-status=: =unread= or =read=
 - =folio-added=: timestamp string
 - =folio-tags=: list of tags
-- =folio-line=: line number for file bookmarks (when applicable)
 
 * Notes
 - URL titles are derived from the URL string itself (host + last path
@@ -78,6 +74,10 @@ Folio stores entries in your bookmark file with extra fields:
 - Non-folio bookmarks appear in the list automatically and are adopted
   (gain =folio-id=, =folio-status=, =folio-added=) the first time you act
   on them through folio.
+
+* Development
+Run =./scripts/check-all.sh= with an Emacs server available.  The suite checks
+parentheses, indentation, byte compilation, Checkdoc, package-lint, and ERT.
 
 * License
 GPL-3.0
