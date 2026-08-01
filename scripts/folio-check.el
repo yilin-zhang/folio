@@ -32,12 +32,14 @@
 (defun folio-check-indent (&optional fix)
   "Check or fix indentation in every Folio Elisp file.
 When FIX is non-nil, rewrite files instead of failing."
+  (put 'folio--with-entry-at-point 'lisp-indent-function 1)
   (let (bad-files)
     (dolist (file (folio-check--elisp-files))
       (with-temp-buffer
         (insert-file-contents file)
         (let ((original (buffer-string)))
-          (emacs-lisp-mode)
+          (let ((emacs-lisp-mode-hook nil))
+            (emacs-lisp-mode))
           (indent-region (point-min) (point-max))
           (unless (string-equal original (buffer-string))
             (if fix
