@@ -104,7 +104,12 @@ When FIX is non-nil, rewrite files instead of failing."
   "Byte-compile Folio without leaving generated files in the repository."
   (let ((destination (make-temp-file "folio-" nil ".elc")))
     (unwind-protect
-        (let ((byte-compile-dest-file-function (lambda (_file) destination)))
+        ;; `byte-compile-error-on-warn' makes warnings fail the check;
+        ;; without it `byte-compile-file' succeeds and real defects (a macro
+        ;; used before its definition, a misdeclared optional dependency)
+        ;; scroll past a passing run.
+        (let ((byte-compile-dest-file-function (lambda (_file) destination))
+              (byte-compile-error-on-warn t))
           (unless (byte-compile-file (expand-file-name "folio.el" folio-check--root))
             (error "Byte compilation failed")))
       (when (file-exists-p destination)

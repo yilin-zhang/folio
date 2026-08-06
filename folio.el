@@ -39,6 +39,11 @@
 (require 'tabulated-list)
 (require 'thingatpt)
 
+;; nerd-icons is an optional runtime dependency, probed by
+;; `folio--nerd-icons-available-p'.  Declare it so byte compilation stays
+;; clean without pulling the package in as a hard requirement.
+(declare-function nerd-icons-octicon "nerd-icons" (icon-name &rest args))
+
 (defgroup folio nil
   "Bookmark enhancement for Emacs."
   :group 'convenience)
