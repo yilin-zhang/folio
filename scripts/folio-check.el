@@ -28,6 +28,12 @@
         (expand-file-name "tests/folio-test.el" folio-check--root)
         (expand-file-name "scripts/folio-check.el" folio-check--root)))
 
+(defun folio-check--source-files ()
+  "Return absolute paths of the Folio package source files.
+Globbed rather than listed so a second source file cannot silently
+escape byte compilation the way a hand-maintained list allows."
+  (directory-files folio-check--root t "\\`folio.*\\.el\\'"))
+
 (defun folio-check-parens ()
   "Check balanced parentheses in every Folio Elisp file."
   (dolist (file (folio-check--elisp-files))
@@ -110,8 +116,10 @@ When FIX is non-nil, rewrite files instead of failing."
         ;; scroll past a passing run.
         (let ((byte-compile-dest-file-function (lambda (_file) destination))
               (byte-compile-error-on-warn t))
-          (unless (byte-compile-file (expand-file-name "folio.el" folio-check--root))
-            (error "Byte compilation failed")))
+          (dolist (file (folio-check--source-files))
+            (unless (byte-compile-file file)
+              (error "Byte compilation failed: %s"
+                     (file-relative-name file folio-check--root)))))
       (when (file-exists-p destination)
         (delete-file destination))))
   "Byte compilation passed.")
