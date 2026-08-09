@@ -502,4 +502,9 @@ into an existing record with tags removes the tags key entirely."
         (folio--refresh-keep-position fallback))
       (should (equal (tabulated-list-get-id) "beta")))))
 
+(ert-deftest folio-list-open/signals-user-error-without-entry ()
+  (with-temp-buffer
+    (tabulated-list-mode)
+    (should-error (folio-list-open) :type 'user-error)))
+
 ;;; folio-test.el ends here

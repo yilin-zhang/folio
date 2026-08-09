@@ -614,14 +614,6 @@ EXISTING-NAME is allowed to match BASE without forcing a suffix."
   (tabulated-list-print t)
   (folio-list--apply-marks))
 
-(defun folio--refresh-list-buffer ()
-  "Refresh the folio list buffer if it exists."
-  (let ((buf (get-buffer "*Folio*")))
-    (when (buffer-live-p buf)
-      (with-current-buffer buf
-        (when (derived-mode-p 'folio-list-mode)
-          (folio-list-refresh))))))
-
 (defun folio-list--goto-id (id)
   "Move point to the row whose tabulated-list ID equals ID."
   (when id
@@ -671,26 +663,33 @@ Prefer a following row when two surviving rows are equally near point."
     (when (and window (window-live-p window))
       (set-window-start window start))))
 
+(defun folio--refresh-list-buffer (&optional keep-position)
+  "Refresh the folio list buffer if it exists.
+When KEEP-POSITION is non-nil and the buffer is visible, preserve its view."
+  (when-let ((buffer (get-buffer "*Folio*")))
+    (with-current-buffer buffer
+      (when (derived-mode-p 'folio-list-mode)
+        (if keep-position
+            (folio--refresh-keep-position)
+          (folio-list-refresh))))))
+
 ;;;; Entry at point
 
 (defun folio--entry-at-point ()
   "Return (ID . ENTRY) at point."
   (let* ((id (tabulated-list-get-id))
          (entry (and id (folio--find-entry id))))
-    (cond
-     ((not entry)
-      (message "Folio: no entry at point")
-      nil)
-     (t (cons id entry)))))
+    (unless entry
+      (user-error "Folio: no entry at point"))
+    (cons id entry)))
 
 (cl-defmacro folio--with-entry-at-point ((id entry) &rest body)
   "Bind ID and ENTRY to the item at point, then run BODY."
   (declare (indent 1))
   `(let* ((pair (folio--entry-at-point))
-          (,id (car-safe pair))
-          (,entry (cdr-safe pair)))
-     (when ,entry
-       ,@body)))
+          (,id (car pair))
+          (,entry (cdr pair)))
+     ,@body))
 
 ;;;; List commands
 
@@ -971,15 +970,7 @@ With an active region, mark all entries in the region (no toggle)."
          (entry folio--note-edit-entry))
     (setf (alist-get 'note entry) note)
     (folio--save-entry id entry)
-    (let ((buf (get-buffer "*Folio*")))
-      (when (buffer-live-p buf)
-        (let ((win (get-buffer-window buf t)))
-          (with-current-buffer buf
-            (when (derived-mode-p 'folio-list-mode)
-              (if win
-                  (with-selected-window win
-                    (folio--refresh-keep-position))
-                (folio-list-refresh)))))))
+    (folio--refresh-list-buffer t)
     (quit-window t)))
 
 (defun folio--note-edit-cancel ()
@@ -1056,7 +1047,7 @@ NAME is the bookmark name, like `bookmark-set'."
     (when record
       (let* ((record (bookmark-get-bookmark-record record))
              (now (format-time-string "%Y-%m-%d %H:%M"))
-             (updates `((folio-id . ,(copy-sequence (folio--new-id)))
+             (updates `((folio-id . ,(folio--new-id))
                         (folio-status . ,folio--status-unread)
                         (folio-added . ,now)))
              (merged (folio--merge-record-if-missing record updates)))
@@ -1129,7 +1120,7 @@ NAME is the bookmark name, like `bookmark-set'."
         (when (or needs-adopt needs-mark)
           (when needs-adopt
             (let ((now (format-time-string "%Y-%m-%d %H:%M")))
-              (setf (alist-get 'folio-id record) (copy-sequence (folio--new-id)))
+              (setf (alist-get 'folio-id record) (folio--new-id))
               (setf (alist-get 'folio-added record) now)))
           (setf (alist-get 'folio-status record) folio--status-read)
           (bookmark-store name record nil)
@@ -1185,9 +1176,8 @@ ORIG is the original function and ARGS are its arguments."
 (unless (advice-member-p #'folio--bookmark-change-advice 'bookmark-delete)
   (advice-add 'bookmark-delete :after #'folio--bookmark-change-advice))
 
-(when (fboundp 'bookmark-load)
-  (unless (advice-member-p #'folio--bookmark-change-advice 'bookmark-load)
-    (advice-add 'bookmark-load :after #'folio--bookmark-change-advice)))
+(unless (advice-member-p #'folio--bookmark-change-advice 'bookmark-load)
+  (advice-add 'bookmark-load :after #'folio--bookmark-change-advice))
 
 (add-hook 'bookmark-after-jump-hook #'folio--bookmark-after-jump)
 
@@ -1196,8 +1186,7 @@ ORIG is the original function and ARGS are its arguments."
   (advice-remove 'bookmark-jump   #'folio--bookmark-jump-advice)
   (advice-remove 'bookmark-store  #'folio--bookmark-change-advice)
   (advice-remove 'bookmark-delete #'folio--bookmark-change-advice)
-  (when (fboundp 'bookmark-load)
-    (advice-remove 'bookmark-load #'folio--bookmark-change-advice))
+  (advice-remove 'bookmark-load #'folio--bookmark-change-advice)
   (remove-hook 'bookmark-after-jump-hook #'folio--bookmark-after-jump)
   nil)
 
