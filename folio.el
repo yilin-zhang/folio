@@ -728,9 +728,9 @@ with its current tags."
                          (length marked-ids)))
             (dolist (id marked-ids)
               (when-let* ((entry (seq-find
-                                 (lambda (candidate)
-                                   (equal id (alist-get 'id candidate)))
-                                 entries)))
+                                  (lambda (candidate)
+                                    (equal id (alist-get 'id candidate)))
+                                  entries)))
                 (setf (alist-get 'tags entry) tags)
                 (folio--save-entry id entry)))
             (folio-list--clear-marks)
