@@ -666,7 +666,7 @@ Prefer a following row when two surviving rows are equally near point."
 (defun folio--refresh-list-buffer (&optional keep-position)
   "Refresh the folio list buffer if it exists.
 When KEEP-POSITION is non-nil and the buffer is visible, preserve its view."
-  (when-let ((buffer (get-buffer "*Folio*")))
+  (when-let* ((buffer (get-buffer "*Folio*")))
     (with-current-buffer buffer
       (when (derived-mode-p 'folio-list-mode)
         (if keep-position
@@ -727,7 +727,7 @@ with its current tags."
                          (if tags (folio--format-tags tags) "(none)")
                          (length marked-ids)))
             (dolist (id marked-ids)
-              (when-let ((entry (seq-find
+              (when-let* ((entry (seq-find
                                  (lambda (candidate)
                                    (equal id (alist-get 'id candidate)))
                                  entries)))
@@ -875,7 +875,7 @@ with its current tags."
 
 (defun folio-list--add-mark-overlay (id)
   "Highlight the current line as marked for ID."
-  (when-let ((existing (gethash id folio-list--mark-overlays)))
+  (when-let* ((existing (gethash id folio-list--mark-overlays)))
     (folio-list--delete-mark-overlays existing))
   (let ((ov (make-overlay (line-beginning-position) (line-end-position)))
         (mark-ov (make-overlay (line-beginning-position)
@@ -920,7 +920,7 @@ With an active region, mark all entries in the region (no toggle)."
           (goto-char beg)
           (beginning-of-line)
           (while (<= (line-beginning-position) finish)
-            (when-let ((id (tabulated-list-get-id)))
+            (when-let* ((id (tabulated-list-get-id)))
               (puthash id t folio-list--marked)
               (folio-list--add-mark-overlay id))
             (forward-line 1)))
@@ -933,7 +933,7 @@ With an active region, mark all entries in the region (no toggle)."
       (if (gethash id folio-list--marked)
           (progn
             (remhash id folio-list--marked)
-            (when-let ((ovs (gethash id folio-list--mark-overlays)))
+            (when-let* ((ovs (gethash id folio-list--mark-overlays)))
               (folio-list--delete-mark-overlays ovs)
               (remhash id folio-list--mark-overlays)))
         (puthash id t folio-list--marked)
@@ -946,7 +946,7 @@ With an active region, mark all entries in the region (no toggle)."
   (let ((id (tabulated-list-get-id)))
     (unless id (user-error "Folio: no entry on this line"))
     (remhash id folio-list--marked)
-    (when-let ((ovs (gethash id folio-list--mark-overlays)))
+    (when-let* ((ovs (gethash id folio-list--mark-overlays)))
       (folio-list--delete-mark-overlays ovs)
       (remhash id folio-list--mark-overlays))
     (forward-line 1)))
