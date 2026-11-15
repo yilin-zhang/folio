@@ -13,8 +13,7 @@ it, feel free to use it, hack on it, or send PRs to improve it.
 * Installation
 #+begin_src elisp
 (use-package folio
-  :ensure nil
-  :load-path "path/to/folio/repo"
+  :vc (:url "https://github.com/yilin-zhang/folio" :rev :newest)
   :commands (folio-list
              folio-add-url
              folio-add-file
